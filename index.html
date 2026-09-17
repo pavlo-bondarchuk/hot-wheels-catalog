@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#090909">
+  <meta name="description" content="Fan-made Hot Wheels catalog and collection tracker powered by public community data.">
+  <title>HW Archive — Hot Wheels Catalog</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <button class="brand" type="button" data-view="discover" aria-label="HW Archive home">
+        <span class="brand-mark" aria-hidden="true"><span>HW</span></span>
+        <span class="brand-copy"><strong>ARCHIVE</strong><small>collector catalog</small></span>
+      </button>
+      <nav class="desktop-nav" aria-label="Main navigation">
+        <button class="nav-link is-active" type="button" data-view="discover">Каталог</button>
+        <button class="nav-link" type="button" data-view="garage">Гараж <span id="garageCountTop">0</span></button>
+        <button class="nav-link" type="button" data-view="wishlist">Wishlist <span id="wishlistCountTop">0</span></button>
+        <button class="nav-link" type="button" data-view="data">Данные</button>
+      </nav>
+    </header>
+
+    <main>
+      <section class="view is-active" data-view-panel="discover">
+        <div class="hero">
+          <div class="eyebrow"><span class="live-dot"></span> COMMUNITY DATA • 1968—2026</div>
+          <h1>Найди свою<br><span>машинку.</span></h1>
+          <p>Каталог релизов Hot Wheels по годам с поиском, фильтрами, гаражом и списком желаний.</p>
+          <div class="search-wrap">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.3-4.3m2.3-5.2a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"/></svg>
+            <input id="searchInput" type="search" autocomplete="off" placeholder="Название, серия, toy #, цвет…" aria-label="Поиск по каталогу">
+            <button id="clearSearch" class="clear-search" type="button" aria-label="Очистить поиск">×</button>
+          </div>
+          <div class="quick-stats">
+            <div><strong id="loadedItemsCount">0</strong><span>машинок загружено</span></div>
+            <div><strong id="loadedYearsCount">0</strong><span>лет в локальном индексе</span></div>
+            <div><strong id="garageCountHero">0</strong><span>в моём гараже</span></div>
+          </div>
+        </div>
+
+        <section class="catalog-section">
+          <div class="toolbar-sticky">
+            <div class="filter-row">
+              <label class="select-chip">Год
+                <select id="yearFilter" aria-label="Год"></select>
+              </label>
+              <label class="select-chip">Серия
+                <select id="seriesFilter" aria-label="Серия"><option value="">Все</option></select>
+              </label>
+              <label class="select-chip">Статус
+                <select id="statusFilter" aria-label="Статус">
+                  <option value="">Все</option>
+                  <option value="garage">В гараже</option>
+                  <option value="wishlist">Wishlist</option>
+                </select>
+              </label>
+              <button id="buildIndexBtn" class="index-btn" type="button">Индекс 1968—2026</button>
+            </div>
+            <div class="results-row">
+              <div><strong id="resultsCount">0</strong> результатов <span id="scopeLabel"></span></div>
+              <label class="sort-control">Сортировка
+                <select id="sortSelect" aria-label="Сортировка">
+                  <option value="number">По номеру</option>
+                  <option value="name">По названию</option>
+                  <option value="year-desc">Сначала новые</option>
+                  <option value="year-asc">Сначала старые</option>
+                </select>
+              </label>
+            </div>
+            <div id="progressWrap" class="progress-wrap" hidden>
+              <div class="progress-copy"><span id="progressText">Строю индекс…</span><span id="progressValue">0%</span></div>
+              <div class="progress-track"><span id="progressBar"></span></div>
+            </div>
+          </div>
+
+          <div id="notice" class="notice" hidden></div>
+          <div id="catalogGrid" class="catalog-grid" aria-live="polite"></div>
+          <div id="emptyState" class="empty-state" hidden>
+            <div class="empty-icon">⌕</div>
+            <h2>Ничего не найдено</h2>
+            <p>Попробуйте другой год, серию или поисковый запрос.</p>
+          </div>
+          <div id="loadMoreWrap" class="load-more-wrap" hidden>
+            <button id="loadMoreBtn" class="secondary-btn" type="button">Показать ещё</button>
+          </div>
+        </section>
+      </section>
+
+      <section class="view collection-view" data-view-panel="garage">
+        <div class="view-head"><div><span class="eyebrow">MY COLLECTION</span><h1>Мой гараж</h1><p>Коллекция хранится локально в этом браузере.</p></div><button class="secondary-btn" type="button" data-view="discover">В каталог</button></div>
+        <div id="garageGrid" class="catalog-grid"></div>
+        <div id="garageEmpty" class="empty-state"><div class="empty-icon">＋</div><h2>Гараж пуст</h2><p>Добавляйте машинки из каталога.</p></div>
+      </section>
+
+      <section class="view collection-view" data-view-panel="wishlist">
+        <div class="view-head"><div><span class="eyebrow">HUNT LIST</span><h1>Wishlist</h1><p>Машинки, которые ещё нужно найти.</p></div><button class="secondary-btn" type="button" data-view="discover">В каталог</button></div>
+        <div id="wishlistGrid" class="catalog-grid"></div>
+        <div id="wishlistEmpty" class="empty-state"><div class="empty-icon">☆</div><h2>Wishlist пуст</h2><p>Отмечайте желанные модели звездой.</p></div>
+      </section>
+
+      <section class="view data-view" data-view-panel="data">
+        <div class="view-head"><div><span class="eyebrow">DATA LAYER</span><h1>Источники и индекс</h1><p>Сайт не использует закрытый API Mattel.</p></div><button class="secondary-btn" type="button" data-view="discover">В каталог</button></div>
+        <div class="data-cards">
+          <article class="data-card"><span class="data-card-kicker">PRIMARY</span><h2>Hot Wheels Wiki / Fandom</h2><p>Годовые таблицы читаются через стандартный MediaWiki API. Карточки нормализуются в браузере и кешируются в IndexedDB.</p><a href="https://hotwheels.fandom.com/wiki/List_of_Hot_Wheels" target="_blank" rel="noreferrer">Открыть источник ↗</a></article>
+          <article class="data-card"><span class="data-card-kicker">FALLBACK / R&D</span><h2>Open-source datasets</h2><p>Community API на GitHub содержит структурированные castings/releases, но пока неполон. Архитектура позволяет подключить его вторым адаптером позже.</p><a href="https://github.com/arthurfelipercosta/hotwheelsapi" target="_blank" rel="noreferrer">Открыть репозиторий ↗</a></article>
+          <article class="data-card accent"><span class="data-card-kicker">LOCAL INDEX</span><h2><span id="dataYears">0</span> лет • <span id="dataItems">0</span> записей</h2><p>Полный индекс строится по запросу. После первой загрузки данные остаются в браузере и открываются значительно быстрее.</p><button id="buildIndexBtnData" class="primary-btn" type="button">Построить / обновить индекс</button></article>
+        </div>
+        <div class="legal-note"><strong>Fan project.</strong> Hot Wheels и связанные товарные знаки принадлежат Mattel. Этот сайт не аффилирован с Mattel. Данные сообщества могут содержать неточности или неполные записи.</div>
+      </section>
+    </main>
+
+    <nav class="mobile-nav" aria-label="Mobile navigation">
+      <button class="mobile-nav-item is-active" type="button" data-view="discover"><span>⌕</span><small>Каталог</small></button>
+      <button class="mobile-nav-item" type="button" data-view="garage"><span>▣</span><small>Гараж</small></button>
+      <button class="mobile-nav-item" type="button" data-view="wishlist"><span>☆</span><small>Wishlist</small></button>
+      <button class="mobile-nav-item" type="button" data-view="data"><span>◫</span><small>Данные</small></button>
+    </nav>
+  </div>
+
+  <dialog id="carDialog" class="car-dialog">
+    <button id="dialogClose" class="dialog-close" type="button" aria-label="Закрыть">×</button>
+    <div id="dialogContent"></div>
+  </dialog>
+
+  <template id="cardTemplate">
+    <article class="car-card">
+      <button class="card-main" type="button">
+        <div class="car-image-wrap"><img class="car-image" alt="" loading="lazy"><div class="image-fallback"><span>HW</span></div><span class="year-badge"></span></div>
+        <div class="car-copy"><div class="card-meta"><span class="series-text"></span><span class="toy-text"></span></div><h2 class="car-name"></h2><div class="spec-line"></div></div>
+      </button>
+      <div class="card-actions"><button class="garage-btn" type="button"><span>＋</span> Garage</button><button class="wishlist-btn" type="button" aria-label="Wishlist">☆</button></div>
+    </article>
+  </template>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
