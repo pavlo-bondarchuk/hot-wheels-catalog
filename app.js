@@ -4,6 +4,7 @@ const API = 'https://hotwheels.fandom.com/api.php'
 const DB_NAME = 'hw-archive-db'
 const STORE = 'years'
 const PAGE_SIZE = 60
+const DATA_VERSION = 3
 
 const $ = (selector, root = document) => root.querySelector(selector)
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)]
@@ -52,11 +53,65 @@ function normalizeHeader(value = '') {
   return slug(v)
 }
 
+function normalizeImageCandidate(value = '') {
+  let url = String(value || '').trim().replace(/&amp;/g, '&')
+  if (!url || /^data:/i.test(url) || /transparent|placeholder|blank\.gif/i.test(url)) return ''
+  if (url.includes(',')) url = url.split(',').map(part => part.trim().split(/\s+/)[0]).filter(Boolean).pop() || ''
+  if (url.startsWith('//')) url = `https:${url}`
+  if (url.startsWith('/')) url = `https://hotwheels.fandom.com${url}`
+  if (!/^https?:/i.test(url)) return ''
+  return url.replace(/\/scale-to-width-down\/\d+/i, '')
+}
+
 function imageUrl(img) {
   if (!img) return ''
-  const candidates = [img.dataset.src, img.dataset.original, img.getAttribute('data-image-name'), img.src]
-  const url = candidates.find(v => v && /^https?:/.test(v)) || ''
-  return url.replace(/\/revision\/latest.*$/i, '/revision/latest').replace(/\/scale-to-width-down\/\d+.*$/i, '')
+  const candidates = [
+    img.getAttribute('data-src'),
+    img.getAttribute('data-original'),
+    img.getAttribute('data-lazy-src'),
+    img.getAttribute('data-image-src'),
+    img.getAttribute('data-srcset'),
+    img.getAttribute('srcset'),
+    img.getAttribute('src')
+  ]
+  for (const candidate of candidates) {
+    const url = normalizeImageCandidate(candidate)
+    if (url) return url
+  }
+  return ''
+}
+
+function sourceUrlFromAnchor(anchor, name) {
+  const sourcePath = anchor?.getAttribute('href') || ''
+  if (sourcePath.startsWith('http')) return sourcePath
+  if (sourcePath.startsWith('/')) return `https://hotwheels.fandom.com${sourcePath}`
+  return `https://hotwheels.fandom.com/wiki/${encodeURIComponent(name.replace(/ /g, '_'))}`
+}
+
+function makeItem({ year, name, sourceTitle, series = '', toy = '', collector = '', color = '', tampo = '', base = '', window = '', interior = '', wheels = '', country = '', set = '', caseValue = '', image = '', sourceUrl = '', rowText = '' }, index) {
+  const type = /super treasure hunt|\bsth\b/i.test(rowText) ? 'STH' : /treasure hunt|\bth\b/i.test(rowText) ? 'TH' : /premium|car culture|pop culture|boulevard/i.test(rowText) ? 'Premium' : 'Mainline'
+  const idBase = [year, toy, collector, name, series, color].filter(Boolean).join('-')
+  return {
+    id: slug(idBase) || `${year}-${index}`,
+    year,
+    name,
+    toy,
+    collector,
+    series,
+    color,
+    tampo,
+    base,
+    window,
+    interior,
+    wheels,
+    country,
+    set,
+    case: caseValue,
+    image,
+    sourceUrl,
+    sourceTitle,
+    type
+  }
 }
 
 function parseWikiTable(html, year, sourceTitle) {
@@ -68,7 +123,7 @@ function parseWikiTable(html, year, sourceTitle) {
     if (rows.length < 2) continue
     const firstHeaderRow = rows.find(row => row.querySelectorAll('th').length >= 2)
     if (!firstHeaderRow) continue
-    const headers = $$('th', firstHeaderRow).map(th => normalizeHeader(th.textContent))
+    const headers = $$(':scope > th', firstHeaderRow).map(th => normalizeHeader(th.textContent))
     if (!headers.includes('name')) continue
     const startIndex = rows.indexOf(firstHeaderRow) + 1
     for (const row of rows.slice(startIndex)) {
@@ -85,19 +140,13 @@ function parseWikiTable(html, year, sourceTitle) {
       if (!name || name.length > 120 || /casting name|model name/i.test(name)) continue
       const img = $('img', row)
       const anchor = nameCell ? $('a[href]', nameCell) : null
-      const sourcePath = anchor?.getAttribute('href') || ''
-      const sourceUrl = sourcePath.startsWith('http') ? sourcePath : sourcePath ? `https://hotwheels.fandom.com${sourcePath}` : `https://hotwheels.fandom.com/wiki/${encodeURIComponent(name.replace(/ /g, '_'))}`
-      const rowText = clean(row.textContent)
-      const type = /super treasure hunt|\bsth\b/i.test(rowText) ? 'STH' : /treasure hunt|\bth\b/i.test(rowText) ? 'TH' : /premium|car culture|pop culture|boulevard/i.test(rowText) ? 'Premium' : 'Mainline'
-      const rawNumber = record.collector || record.number || ''
-      const idBase = [year, record.toy, rawNumber, name, record.series, record.color].filter(Boolean).join('-')
-      items.push({
-        id: slug(idBase) || `${year}-${items.length}`,
+      items.push(makeItem({
         year,
         name,
-        toy: record.toy || '',
-        collector: rawNumber,
+        sourceTitle,
         series: record.series || '',
+        toy: record.toy || '',
+        collector: record.collector || record.number || '',
         color: record.color || '',
         tampo: record.tampo || '',
         base: record.base || '',
@@ -106,25 +155,112 @@ function parseWikiTable(html, year, sourceTitle) {
         wheels: record.wheels || '',
         country: record.country || '',
         set: record.set || '',
-        case: record.case || '',
+        caseValue: record.case || '',
         image: imageUrl(img),
-        sourceUrl,
-        sourceTitle,
-        type
-      })
+        sourceUrl: sourceUrlFromAnchor(anchor, name),
+        rowText: clean(row.textContent)
+      }, items.length))
     }
   }
+
+  if (!items.length) {
+    const ignoredSections = /gallery|hot wheels by year|categories|references|external links|see also|navigation|contents/i
+    const ignoredLinks = /^(edit|history|purge|talk|category|file|image|list of|hot wheels by year)$/i
+    for (const heading of $$('h2,h3', doc)) {
+      const section = clean(heading.textContent).replace(/\[edit\]$/i, '').trim()
+      if (!section || ignoredSections.test(section)) continue
+      let node = heading.nextElementSibling
+      while (node && !/^H[23]$/.test(node.tagName)) {
+        for (const anchor of $$('li > a[href^="/wiki/"], p > a[href^="/wiki/"]', node)) {
+          const href = anchor.getAttribute('href') || ''
+          const name = clean(anchor.textContent)
+          if (!name || name.length > 120 || ignoredLinks.test(name) || /^(Category|File|Special|Template|Help):/i.test(href.replace('/wiki/', ''))) continue
+          if (/List_of_|Category:|File:|Special:|Template:|Help:/i.test(href)) continue
+          const holder = anchor.closest('li,p') || node
+          items.push(makeItem({
+            year,
+            name,
+            sourceTitle,
+            series: section,
+            image: imageUrl($('img', holder)),
+            sourceUrl: sourceUrlFromAnchor(anchor, name),
+            rowText: `${section} ${clean(holder.textContent)}`
+          }, items.length))
+        }
+        node = node.nextElementSibling
+      }
+    }
+  }
+
   const unique = new Map()
   items.forEach(item => {
-    const key = item.id || `${item.year}-${item.name}-${item.image}`
+    const key = `${item.year}|${item.toy}|${item.collector}|${item.name}|${item.series}|${item.color}`.toLowerCase()
     if (!unique.has(key)) unique.set(key, item)
   })
   return [...unique.values()]
 }
 
+function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
+
+async function fetchJsonWithRetry(url, attempts = 3) {
+  let lastError
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 18000)
+    try {
+      const response = await fetch(url, { signal: controller.signal, cache: 'no-store' })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      return await response.json()
+    } catch (error) {
+      lastError = error
+      if (attempt < attempts - 1) await delay(700 * (attempt + 1))
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+  throw lastError || new Error('Network error')
+}
+
+function mergeUniqueItems(groups) {
+  const unique = new Map()
+  groups.flat().forEach(item => {
+    const key = `${item.year}|${item.toy}|${item.collector}|${item.name}|${item.series}|${item.color}`.toLowerCase()
+    if (!unique.has(key)) unique.set(key, item)
+  })
+  return [...unique.values()]
+}
+
+async function fetchYearBySections(year, title) {
+  const sectionParams = new URLSearchParams({ action: 'parse', format: 'json', origin: '*', page: title, prop: 'sections', disablelimitreport: '1' })
+  const sectionJson = await fetchJsonWithRetry(`${API}?${sectionParams}`)
+  if (sectionJson.error || !Array.isArray(sectionJson.parse?.sections)) throw new Error(sectionJson.error?.info || 'Sections unavailable')
+  const ignored = /see also|references|external links|hot wheels by year|categories|navigation|gallery/i
+  const sections = sectionJson.parse.sections.filter(section => section.index && !ignored.test(clean(section.line || ''))).slice(0, 40)
+  if (!sections.length) throw new Error('No usable sections')
+  const queue = sections.slice()
+  const groups = []
+  const worker = async () => {
+    while (queue.length) {
+      const section = queue.shift()
+      try {
+        const params = new URLSearchParams({ action: 'parse', format: 'json', origin: '*', page: title, section: section.index, prop: 'text', disablelimitreport: '1' })
+        const json = await fetchJsonWithRetry(`${API}?${params}`, 2)
+        const html = json.parse?.text?.['*']
+        if (!html) continue
+        const parsed = parseWikiTable(html, year, title)
+        if (parsed.length) groups.push(parsed)
+      } catch {}
+    }
+  }
+  await Promise.all(Array.from({ length: 2 }, worker))
+  const items = mergeUniqueItems(groups)
+  if (!items.length) throw new Error('No catalog rows parsed from sections')
+  return items
+}
+
 async function fetchYear(year) {
   const cached = await dbGet(year)
-  if (cached?.items?.length) {
+  if (cached?.items?.length && cached.version === DATA_VERSION) {
     state.data.set(year, cached.items)
     return cached.items
   }
@@ -132,13 +268,16 @@ async function fetchYear(year) {
   let lastError
   for (const title of candidates) {
     try {
-      const params = new URLSearchParams({ action: 'parse', format: 'json', origin: '*', page: title, prop: 'text|displaytitle|revid', disablelimitreport: '1' })
-      const response = await fetch(`${API}?${params}`)
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const json = await response.json()
-      if (json.error || !json.parse?.text?.['*']) throw new Error(json.error?.info || 'Page unavailable')
-      const items = parseWikiTable(json.parse.text['*'], year, title)
-      if (!items.length) throw new Error('No catalog rows parsed')
+      let items = []
+      try {
+        const params = new URLSearchParams({ action: 'parse', format: 'json', origin: '*', page: title, prop: 'text|displaytitle|revid', disablelimitreport: '1' })
+        const json = await fetchJsonWithRetry(`${API}?${params}`)
+        if (json.error || !json.parse?.text?.['*']) throw new Error(json.error?.info || 'Page unavailable')
+        items = parseWikiTable(json.parse.text['*'], year, title)
+      } catch (error) {
+        lastError = error
+      }
+      if (!items.length) items = await fetchYearBySections(year, title)
       state.data.set(year, items)
       await dbPut(year, items, title)
       return items
@@ -222,6 +361,7 @@ function createCard(item) {
   const node = els.cardTemplate.content.firstElementChild.cloneNode(true)
   const img = $('.car-image', node)
   if (item.image) {
+    img.referrerPolicy = 'no-referrer'
     img.src = item.image
     img.alt = item.name
     img.addEventListener('error',()=>img.classList.add('is-broken'),{once:true})
@@ -285,7 +425,7 @@ function renderCollection(type) {
 
 function openDialog(item) {
   const specs = [['Year',item.year],['Toy #',item.toy],['Collector #',item.collector],['Color',item.color],['Tampo',item.tampo],['Base',item.base],['Window',item.window],['Interior',item.interior],['Wheels',item.wheels],['Country',item.country],['Case',item.case],['Type',item.type]].filter(([,v])=>v)
-  els.dialogContent.innerHTML = `<div class="dialog-body"><div class="dialog-media">${item.image?`<img src="${escapeAttr(item.image)}" alt="${escapeAttr(item.name)}">`:'<div class="image-fallback"><span>HW</span></div>'}</div><div class="dialog-info"><span class="eyebrow">${escapeHtml(item.toy || item.collector || 'HOT WHEELS')}</span><h2>${escapeHtml(item.name)}</h2><div class="dialog-series">${escapeHtml(item.year + (item.series ? ` • ${item.series}` : ''))}</div><div class="dialog-specs">${specs.map(([k,v])=>`<div class="dialog-spec"><span>${escapeHtml(String(k))}</span><strong>${escapeHtml(String(v))}</strong></div>`).join('')}</div><div class="dialog-actions"><button id="dialogGarage" type="button"></button><button id="dialogWishlist" type="button"></button></div><a class="source-link" href="${escapeAttr(item.sourceUrl)}" target="_blank" rel="noreferrer">Source: Hot Wheels Wiki ↗</a></div></div>`
+  els.dialogContent.innerHTML = `<div class="dialog-body"><div class="dialog-media">${item.image?`<img src="${escapeAttr(item.image)}" alt="${escapeAttr(item.name)}" referrerpolicy="no-referrer">`:'<div class="image-fallback"><span>HW</span></div>'}</div><div class="dialog-info"><span class="eyebrow">${escapeHtml(item.toy || item.collector || 'HOT WHEELS')}</span><h2>${escapeHtml(item.name)}</h2><div class="dialog-series">${escapeHtml(item.year + (item.series ? ` • ${item.series}` : ''))}</div><div class="dialog-specs">${specs.map(([k,v])=>`<div class="dialog-spec"><span>${escapeHtml(String(k))}</span><strong>${escapeHtml(String(v))}</strong></div>`).join('')}</div><div class="dialog-actions"><button id="dialogGarage" type="button"></button><button id="dialogWishlist" type="button"></button></div><a class="source-link" href="${escapeAttr(item.sourceUrl)}" target="_blank" rel="noreferrer">Source: Hot Wheels Wiki ↗</a></div></div>`
   const garage = $('#dialogGarage',els.dialogContent)
   const wishlist = $('#dialogWishlist',els.dialogContent)
   const sync = () => {
@@ -320,7 +460,7 @@ async function buildFullIndex() {
       updateDataStats()
     }
   }
-  await Promise.all(Array.from({length:3},worker))
+  await Promise.all(Array.from({length:2},worker))
   state.allIndexed = failures.length === 0
   state.loadingIndex = false
   els.buildIndex.disabled = false
@@ -361,12 +501,12 @@ function openDb() {
 }
 
 async function dbGet(year) { const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readonly');const req=tx.objectStore(STORE).get(year);req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error)}) }
-async function dbPut(year,items,title) { const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).put({year,items,title,updatedAt:Date.now()});tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error)}) }
+async function dbPut(year,items,title) { const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).put({year,items,title,version:DATA_VERSION,updatedAt:Date.now()});tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error)}) }
 async function dbAll() { const db=await openDb();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,'readonly');const req=tx.objectStore(STORE).getAll();req.onsuccess=()=>resolve(req.result||[]);req.onerror=()=>reject(req.error)}) }
-async function dbStats() { try { const rows=await dbAll();return {years:rows.length,items:rows.reduce((sum,row)=>sum+(row.items?.length||0),0)} } catch { return {years:state.data.size,items:[...state.data.values()].flat().length} } }
+async function dbStats() { try { const rows=(await dbAll()).filter(row=>row.version===DATA_VERSION);return {years:rows.length,items:rows.reduce((sum,row)=>sum+(row.items?.length||0),0)} } catch { return {years:state.data.size,items:[...state.data.values()].flat().length} } }
 
 async function hydrateCache() {
-  try { const rows=await dbAll();rows.forEach(row=>{if(row.items?.length)state.data.set(row.year,row.items)}) } catch {}
+  try { const rows=await dbAll();rows.forEach(row=>{if(row.items?.length && row.version===DATA_VERSION)state.data.set(row.year,row.items)}) } catch {}
   updateDataStats()
 }
 
